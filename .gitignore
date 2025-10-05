@@ -1,0 +1,11 @@
+# IntelliJ / IDEA
+.idea/
+*.iml
+
+# macOS
+.DS_Store
+
+# Build / out (ajusta si usas Maven/Gradle)
+out/
+target/
+build/
