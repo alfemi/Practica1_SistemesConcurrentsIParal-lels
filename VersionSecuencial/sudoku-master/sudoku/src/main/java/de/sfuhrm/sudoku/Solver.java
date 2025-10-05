@@ -31,7 +31,7 @@ import java.util.Objects;
  * @author Stephan Fuhrmann
  */
 public final class Solver {
-
+    int varPruebaGit
     /**
      * Current working copy.
      */
