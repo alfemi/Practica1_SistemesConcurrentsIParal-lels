@@ -31,6 +31,8 @@ import java.util.Objects;
  * @author Stephan Fuhrmann
  */
 public final class Solver {
+
+    //Prueba
     /**
      * Current working copy.
      */
