@@ -16,7 +16,7 @@ You should have received a copy of the GNU Library General Public
 License along with this library; if not, write to the
 Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
 Boston, MA  02110-1301, USA.
- */
+*/
 package de.sfuhrm.sudoku;
 
 import java.util.ArrayList;
@@ -31,7 +31,6 @@ import java.util.Objects;
  * @author Stephan Fuhrmann
  */
 public final class Solver {
-
     /**
      * Current working copy.
      */
@@ -64,14 +63,12 @@ public final class Solver {
         riddle.setAll(solveMe.getArray());
         possibleSolutions = new ArrayList<>();
     }
-
     /** Set the limit for maximum results.
      * @param set the new limit.
      */
     public void setLimit(final int set) {
         this.limit = set;
     }
-
     /**
      * Solves the Sudoku problem.
      *
@@ -101,7 +98,6 @@ public final class Solver {
         if (possibleSolutions.size() >= limit) {
             return 0;
         }
-
         // just one result, we have no more to choose
         if (freeCells == 0) {
             GameMatrix gmi = new GameMatrixImpl(riddle.getSchema());
