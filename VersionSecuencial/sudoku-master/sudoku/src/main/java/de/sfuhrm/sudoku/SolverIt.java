@@ -1,3 +1,11 @@
+/* ---------------------------------------------------------------
+Práctica 1.
+Código fuente: SolverIt.java
+Grau GEIADE
+41533494W - Antonio Cayuela Lopez
+48054965F - Alejandro Fernandez Mimbrera
+--------------------------------------------------------------- */
+
 /*
 Sudoku - a fast Java Sudoku game creation library.
 Copyright (C) 2017-2018  Stephan Fuhrmann
