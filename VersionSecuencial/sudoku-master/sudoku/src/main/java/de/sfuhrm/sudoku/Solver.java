@@ -31,7 +31,7 @@ import java.util.Objects;
  * @author Stephan Fuhrmann
  */
 public final class Solver {
-    
+
     /**
      * Current working copy.
      */
@@ -97,13 +97,13 @@ public final class Solver {
      *
      * @return the found solutions. Should be only one.
      */
-    public List<GameMatbacktrackrix> solve() {
+    public List<GameMatrix> solve() {
         start = System.currentTimeMillis();
         possibleSolutions.clear();
         int freeCells = riddle.getSchema().getTotalFields()
                 - riddle.getSetCount();
 
-        (freeCells, new CellIndex());
+        backtrack(freeCells, new CellIndex());
 
         long end = System.currentTimeMillis();
         System.out.printf("[%3.3f] SUDOKU DONE. Recursive Calls: %d. Free Cells: %d. Solutions Found: %d.\n\n",(end-start)/1000.0, this.getRecursive_calls(), freeCells, possibleSolutions.size());

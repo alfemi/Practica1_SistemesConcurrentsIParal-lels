@@ -27,6 +27,8 @@ import de.sfuhrm.sudoku.GameSchemas;
 import de.sfuhrm.sudoku.QuadraticArrays;
 import de.sfuhrm.sudoku.Riddle;
 import de.sfuhrm.sudoku.Solver;
+import de.sfuhrm.sudoku.SolverIt;
+import de.sfuhrm.sudoku.SolverRec;
 import de.sfuhrm.sudoku.output.GameMatrixFormatter;
 import de.sfuhrm.sudoku.output.JsonArrayFormatter;
 import de.sfuhrm.sudoku.output.LatexTableFormatter;
@@ -176,6 +178,14 @@ public class Client {
             usage = "Show this command line help")
     private boolean help;
 
+    /** Solver mode selection. */
+    enum Mode { Auto, Seq, Iter, Rec }
+
+    @Option(name = "-m",
+            aliases = {"-mode"},
+            usage = "Solver mode: auto|seq|iter|rec")
+    private Mode mode = Mode.Auto;
+
     /** The GameSchema to use. */
     private enum SchemaEnum {
         /** The 4x4 schema. */
@@ -229,8 +239,22 @@ public class Client {
         GameMatrix gameMatrix = new GameMatrixFactory()
                 .newGameMatrix(getSchema());
         gameMatrix.setAll(data);
-        Solver solver = new Solver(gameMatrix);
-        List<GameMatrix> solutions = solver.solve();
+
+        List<GameMatrix> solutions;
+
+        if (mode == Mode.Seq || (mode == Mode.Auto && ThreadsNumber <= 1)) {
+            Solver solver = new Solver(gameMatrix);
+            solutions = solver.solve();
+        } else if (mode == Mode.Iter || (mode == Mode.Auto && ThreadsNumber > 1)) {
+            System.setProperty("sudoku.threads", Integer.toString(ThreadsNumber));
+            SolverIt solver = new SolverIt(gameMatrix);
+            solutions = solver.solve();
+        } else { // Mode.Rec
+            System.setProperty("sudoku.threads", Integer.toString(ThreadsNumber));
+            SolverRec solver = new SolverRec(gameMatrix);
+            solutions = solver.solve();
+        }
+
         if (solutions.size()==0)
             System.out.println("Not SUDOKU Solution Found.");
         if (!quiet) {

@@ -31,49 +31,17 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * Solves a partially filled Sudoku. Can find multiple solutions if they are
- * there.
- *
- * @author Stephan Fuhrmann
- */
-public final class Solver {
+public final class SolverIt {
 
-    /**
-     * Current working copy.
-     */
     private final CachedGameMatrixImpl riddle;
-
-    /**
-     * The possible solutions for this riddle.
-     */
     private final List<GameMatrix> possibleSolutions;
-
-    /** The default limit.
-     * @see #limit
-     */
     public static final int DEFAULT_LIMIT = 1;
-
-    /**
-     * The maximum number of solutions to search.
-     */
     private int limit;
 
-    /**
-     * Counter for recursive calls on bactrack algorithm
-     */
-    private static long recursive_calls=0;
-    public static long start;
-
-    private static final long DEFAULT_STATS_STEP = 1000000;
-
-    /**
-     * Creates a solver for the given riddle.
-     *
-     * @param solveMe the riddle to solve.
-     */
-    public Solver(final GameMatrix solveMe) {
+    public SolverIt(final GameMatrix solveMe) {
         Objects.requireNonNull(solveMe, "solveMe is null");
         limit = DEFAULT_LIMIT;
         riddle = new CachedGameMatrixImpl(solveMe.getSchema());
@@ -81,101 +49,92 @@ public final class Solver {
         possibleSolutions = new ArrayList<>();
     }
 
-    public static synchronized long getRecursive_calls() {
-        return recursive_calls;
-    }
-
-    public static synchronized void setRecursive_calls(long recursive_calls) {
-        Solver.recursive_calls = recursive_calls;
-    }
-
-    public static synchronized long incRecursive_calls() {
-        return ++Solver.recursive_calls;
-    }
-
-    /** Set the limit for maximum results.
-     * @param set the new limit.
-     */
     public void setLimit(final int set) {
         this.limit = set;
     }
 
-    /**
-     * Solves the Sudoku problem.
-     *
-     * @return the found solutions. Should be only one.
-     */
-    public List<GameMatrix> solve() {
-        start = System.currentTimeMillis();
-        possibleSolutions.clear();
-        int freeCells = riddle.getSchema().getTotalFields()
-                - riddle.getSetCount();
-
-        backtrack(freeCells, new CellIndex());
-
-        long end = System.currentTimeMillis();
-        System.out.printf("[%3.3f] SUDOKU DONE. Recursive Calls: %d. Free Cells: %d. Solutions Found: %d.\n\n",(end-start)/1000.0, this.getRecursive_calls(), freeCells, possibleSolutions.size());
-
-        return Collections.unmodifiableList(possibleSolutions);
+    static final class State {
+        final CachedGameMatrixImpl board;
+        final int freeCells;
+        State(CachedGameMatrixImpl board, int freeCells) {
+            this.board = board;
+            this.freeCells = freeCells;
+        }
     }
 
-    /**
-     * Solves a Sudoku using backtracking.
-     *
-     * @param freeCells number of free cells, abort criterion.
-     * @param minimumCell coordinates to the so-far found minimum cell.
-     * @return the total number of solutions.
-     */
-    private int backtrack(final int freeCells, final CellIndex minimumCell) {
-        assert freeCells >= 0 : "freeCells is negative";
+    private static CachedGameMatrixImpl copyOf(CachedGameMatrixImpl src) {
+        CachedGameMatrixImpl c = new CachedGameMatrixImpl(src.getSchema());
+        c.setAll(src.getArray());
+        return c;
+    }
 
-        if ((this.incRecursive_calls()%DEFAULT_STATS_STEP)==0) {
-            long end = System.currentTimeMillis();
-            System.out.printf("[%3.3f] Recursive Calls: %d. Free Cells: %d. Solutions Found: %d.\n",(end-start)/1000.0, this.getRecursive_calls(), freeCells, possibleSolutions.size());
-        }
-        // don't recurse further if already at limit
-        if (possibleSolutions.size() >= limit) {
-            return 0;
-        }
+    public List<GameMatrix> solve() {
+        long start = System.currentTimeMillis();
+        possibleSolutions.clear();
 
-        // just one result, we have no more to choose
-        if (freeCells == 0) {
-            GameMatrix gmi = new GameMatrixImpl(riddle.getSchema());
-            gmi.setAll(riddle.getArray());
-            possibleSolutions.add(gmi);
+        int freeCells = riddle.getSchema().getTotalFields() - riddle.getSetCount();
 
-            return 1;
-        }
+        BlockingQueue<State> queue = new LinkedBlockingQueue<>();
+        queue.offer(new State(copyOf(riddle), freeCells));
 
-        GameMatrixImpl.FreeCellResult freeCellResult =
-                riddle.findLeastFreeCell(minimumCell);
-        if (freeCellResult != GameMatrixImpl.FreeCellResult.FOUND) {
-            // no solution
-            return 0;
-        }
+        List<GameMatrix> out = Collections.synchronizedList(possibleSolutions);
+        AtomicBoolean stop = new AtomicBoolean(false);
 
-        int result = 0;
-        int minimumRow = minimumCell.row;
-        int minimumColumn = minimumCell.column;
-        int minimumFree = riddle.getFreeMask(minimumRow, minimumColumn);
-        int minimumBits = Integer.bitCount(minimumFree);
+        int nThreads = Integer.getInteger("sudoku.threads",
+                Math.max(1, Runtime.getRuntime().availableProcessors()));
+        ExecutorService pool = Executors.newFixedThreadPool(nThreads);
 
-        // else we are done
-        // now try each number
-        for (int bit = 0; bit < minimumBits; bit++) {
-            int index = Creator.getSetBitOffset(minimumFree, bit);
-            assert index > 0;
+        Runnable worker = () -> {
+            while (!stop.get()) {
+                State s;
+                try {
+                    s = queue.poll(100, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                if (s == null) {
+                    if (stop.get() || queue.isEmpty()) return;
+                    continue;
+                }
+                if (out.size() >= limit) { stop.set(true); return; }
 
-            // Asignamos número index a la celda
-            riddle.set(minimumRow, minimumColumn, (byte) index);
-            int resultCount = backtrack(freeCells - 1, minimumCell);
-            result += resultCount;
-        }
-        // Antes de volver marcamos la celda como no asignada
-        riddle.set(minimumRow,
-                minimumColumn,
-                riddle.getSchema().getUnsetValue());
+                if (s.freeCells == 0) {
+                    GameMatrix g = new GameMatrixImpl(s.board.getSchema());
+                    g.setAll(s.board.getArray());
+                    synchronized (out) {
+                        if (out.size() < limit) out.add(g);
+                        if (out.size() >= limit) stop.set(true);
+                    }
+                    continue;
+                }
 
-        return result;
+                CellIndex cell = new CellIndex();
+                GameMatrixImpl.FreeCellResult fr = s.board.findLeastFreeCell(cell);
+                if (fr != GameMatrixImpl.FreeCellResult.FOUND) {
+                    continue;
+                }
+
+                int mask = s.board.getFreeMask(cell.row, cell.column);
+                int bits = Integer.bitCount(mask);
+                for (int b = 0; b < bits && !stop.get(); b++) {
+                    int idx = Creator.getSetBitOffset(mask, b);
+                    CachedGameMatrixImpl c = new CachedGameMatrixImpl(s.board.getSchema());
+                    c.setAll(s.board.getArray());
+                    c.set(cell.row, cell.column, (byte) idx);
+                    queue.offer(new State(c, s.freeCells - 1));
+                }
+            }
+        };
+
+        for (int i = 0; i < nThreads; i++) pool.submit(worker);
+        pool.shutdown();
+        try { pool.awaitTermination(10, TimeUnit.MINUTES); } catch (InterruptedException ignored) {}
+
+        long end = System.currentTimeMillis();
+        System.out.printf("[%3.3f] SUDOKU DONE (Iter). Free Cells: %d. Solutions Found: %d.%n%n",
+                (end - start) / 1000.0, freeCells, out.size());
+
+        return Collections.unmodifiableList(out);
     }
 }
