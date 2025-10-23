@@ -17,6 +17,7 @@ License along with this library; if not, write to the
 Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
 Boston, MA  02110-1301, USA.
 */
+
 package de.sfuhrm.sudoku.client;
 
 import de.sfuhrm.sudoku.Creator;
@@ -47,188 +48,102 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 /**
- * A Sudoku CLI client.
- * @author Stephan Fuhrmann
+ * Sudoku command-line client.
  */
 public class Client {
 
-    /** The number of outputs to create. */
-    @Option(name = "-n",
-            aliases = {"-count"},
-            usage = "The number of outputs to create")
+    @Option(name = "-n", aliases = {"-count"}, usage = "Number of outputs to create")
     private int count = 1;
 
-    /** The operator for the command. */
     enum Op {
-        /** Create a fully filled Sudoku. */
-        Full,
-        /** Create a partly filled Sudoku for a riddle. */
-        Riddle,
-        /** Create a riddle and the solution. */
-        Both,
-        /** Solve a Sudoku. */
-        Solve
+        Full, Riddle, Both, Solve
     }
 
-    /** The possible formatters that can be used. */
     enum Formatter {
-        /** The {@link PlainTextFormatter}. */
         PlainText(PlainTextFormatter.class),
-        /** The {@link MarkdownTableFormatter}. */
         MarkDownTable(MarkdownTableFormatter.class),
-        /** The {@link LatexTableFormatter}. */
         LatexTable(LatexTableFormatter.class),
-        /** The {@link JsonArrayFormatter}. */
         JsonArray(JsonArrayFormatter.class);
 
-        /** The class of the formatter to create an instance of. */
         private final Class<? extends GameMatrixFormatter> clazz;
 
-        /** Constructs a new instance.
-         * @param inClazz the class to construct formatters with.
-         */
         Formatter(final Class<? extends GameMatrixFormatter> inClazz) {
             this.clazz = inClazz;
         }
 
-        /** Constructs a new instance of the formatter.
-         * @return the freshly created formatter.
-         */
         public GameMatrixFormatter newInstance() {
             try {
                 return clazz.getDeclaredConstructor().newInstance();
-            } catch (NoSuchMethodException | InvocationTargetException
-                    | IllegalAccessException | InstantiationException ex) {
+            } catch (NoSuchMethodException | InvocationTargetException |
+                     IllegalAccessException | InstantiationException ex) {
                 throw new IllegalStateException(ex);
             }
         }
     }
 
-    /** The output format to use. */
-    @Option(name = "-f",
-            aliases = {"-format"},
-            usage = "The output format to use")
+    @Option(name = "-f", aliases = {"-format"}, usage = "Output format")
     private Formatter format = Formatter.PlainText;
 
-    /** Write to file. */
-    @Option(name = "-w",
-            aliases = {"-writefile"},
-            usage = "Write riddle to file")
+    @Option(name = "-w", aliases = {"-writefile"}, usage = "Write riddle/solution to file")
     private boolean writefile;
 
-    /** The operation to perform. */
-    @Option(name = "-e",
-            aliases = {"-exec"},
-            usage = "The operation to perform")
+    @Option(name = "-e", aliases = {"-exec"}, usage = "Operation to perform")
     private Op op = Op.Full;
 
-    /** Show timing information. */
-    @Option(name = "-t",
-            aliases = {"-time"},
-            usage = "Show timing information")
+    @Option(name = "-t", aliases = {"-time"}, usage = "Show timing information")
     private boolean timing;
 
-    /** No output. */
-    @Option(name = "-q",
-            aliases = {"-quiet"},
-            usage = "No output")
+    @Option(name = "-q", aliases = {"-quiet"}, usage = "No output")
     private boolean quiet;
 
-    /**
-     * Maximum amount of Numbers to clear.
-     */
-    @Option(name = "-c",
-            aliases = {"-numberstoclear"},
-            usage = "Amount of Numbers to clear.")
+    @Option(name = "-c", aliases = {"-numberstoclear"}, usage = "Numbers to clear")
     private int maxNumbersToClear = -1;
 
-    /** Game schema.
-     * @see de.sfuhrm.sudoku.GameSchemas
-     * */
-    @Option(name = "-s",
-            aliases = {"-schema"},
-            usage = "Game matrix size for the generated game."
-                    + "A 9x9 sudoku has 9. There are "
-                    + "4x4, 9x9, 16x16 and 25x25 sudokus supported.")
+    @Option(name = "-s", aliases = {"-schema"}, usage = "Sudoku size (4x4, 9x9, 16x16, 25x25)")
     private SchemaEnum schema = SchemaEnum.S9X9;
 
-    /**
-     * Numbers of threads.
-     */
-    @Option(name = "-p",
-            aliases = {"-threads"},
-            usage = "Number of threads used to resolve sudoku.")
+    @Option(name = "-p", aliases = {"-threads"}, usage = "Number of threads")
     private int ThreadsNumber = 1;
 
-    /** Input file to read for solving. */
-    @Option(name = "-i",
-            aliases = {"-input"},
-            usage = "Input sudoku file to read for solving")
+    @Option(name = "-i", aliases = {"-input"}, usage = "Input sudoku file to solve")
     private Path input;
 
-    /** Output file for riddle and solution file. */
-    @Option(name = "-o",
-            aliases = {"-output"},
-            usage = "Output file for riddle & solution")
+    @Option(name = "-o", aliases = {"-output"}, usage = "Output base name")
     private Path output;
 
-    /** Show this command line help. */
-    @Option(name = "-h",
-            aliases = {"-help"},
-            usage = "Show this command line help")
+    @Option(name = "-h", aliases = {"-help"}, usage = "Show help")
     private boolean help;
 
-    /** Solver mode selection. */
     enum Mode { Auto, Seq, Iter, Rec }
 
-    @Option(name = "-m",
-            aliases = {"-mode"},
-            usage = "Solver mode: auto|seq|iter|rec")
+    @Option(name = "-m", aliases = {"-mode"}, usage = "Solver mode: auto|seq|iter|rec")
     private Mode mode = Mode.Auto;
 
-    /** The GameSchema to use. */
     private enum SchemaEnum {
-        /** The 4x4 schema. */
         S4X4(GameSchemas.SCHEMA_4X4),
-        /** The 9x9 schema. */
         S9X9(GameSchemas.SCHEMA_9X9),
-        /** The 16x16 schema. */
         S16X16(GameSchemas.SCHEMA_16X16),
-        /** The 25x25 schema. */
         S25X25(GameSchemas.SCHEMA_25X25);
 
-        /** Reference of the game schema object of the game. */
         private final GameSchema schema;
 
-        /** Constructor.
-         * @param inSchema the game schema used in the game.
-         * */
         SchemaEnum(final GameSchema inSchema) {
             this.schema = inSchema;
         }
     }
 
-    /** Get the game schema requested in the command line.
-     * @return a game schema to use for the game.
-     * */
     private GameSchema getSchema() {
         return schema.schema;
     }
 
-    /** Solves a Sudoku.
-     * @param formatter the formatter to print the solved Sudoku with.
-     * @throws FileNotFoundException if the referenced file does not exist.
-     * @throws IOException for other errors related to file IO.
-     */
+    /** Solve sudoku */
     private void solve(final GameMatrixFormatter formatter)
             throws FileNotFoundException, IOException {
         if (op == Op.Solve && input == null) {
-            throw new IllegalArgumentException(
-                    "Expecting input file for Solve");
+            throw new IllegalArgumentException("Expecting input file for Solve");
         }
 
         List<String> lines = Files.readAllLines(input);
-        // remove empty lines, replace funny chars with 0
         lines = lines.stream()
                 .filter(l -> !l.isEmpty())
                 .map(l -> l.replaceAll("__", "0"))
@@ -236,8 +151,7 @@ public class Client {
 
         byte[][] data = QuadraticArrays.parse(lines.toArray(new String[0]));
 
-        GameMatrix gameMatrix = new GameMatrixFactory()
-                .newGameMatrix(getSchema());
+        GameMatrix gameMatrix = new GameMatrixFactory().newGameMatrix(getSchema());
         gameMatrix.setAll(data);
 
         List<GameMatrix> solutions;
@@ -249,30 +163,27 @@ public class Client {
             System.setProperty("sudoku.threads", Integer.toString(ThreadsNumber));
             SolverIt solver = new SolverIt(gameMatrix);
             solutions = solver.solve();
-        } else { // Mode.Rec
+        } else {
             System.setProperty("sudoku.threads", Integer.toString(ThreadsNumber));
             SolverRec solver = new SolverRec(gameMatrix);
             solutions = solver.solve();
         }
 
-        if (solutions.size()==0)
-            System.out.println("Not SUDOKU Solution Found.");
-        if (!quiet) {
-            for (GameMatrix r : solutions) {
-                System.out.println(formatter.format(r));
+        if (solutions.isEmpty()) {
+            System.out.println("No Sudoku solution found.");
+        } else {
+            if (!quiet) {
+                for (GameMatrix r : solutions) {
+                    System.out.println(formatter.format(r));
+                }
             }
-        }
-        if (writefile && solutions.size()>0) {
-            writeSolution(formatter, solutions.get(0));
+            if (writefile) {
+                writeSolution(formatter, solutions.get(0));
+            }
         }
     }
 
-
-    /**
-     * Runs the client with the parsed command line options.
-     * Performs the actions requested by the user.
-     * @throws IOException if some IO goes wrong.
-     */
+    /** Run the selected operation */
     private void run() throws IOException {
         GameMatrixFormatter formatter = format.newInstance();
         long start = System.currentTimeMillis();
@@ -290,38 +201,24 @@ public class Client {
                 switch (op) {
                     case Full:
                         matrix = Creator.createFull(getSchema());
-                        if (!quiet) {
-                            System.out.println(formatter.format(matrix));
-                        }
-                        if (writefile) {
-                            writeSolution(formatter, matrix);
-                        }
+                        if (!quiet) System.out.println(formatter.format(matrix));
+                        if (writefile) writeSolution(formatter, matrix);
                         break;
 
                     case Riddle:
                         matrix = Creator.createFull(getSchema());
-                        if (maxNumbersToClear > 0) {
-                            riddle = Creator
-                                    .createRiddle(matrix, maxNumbersToClear);
-                        } else {
-                            riddle = Creator.createRiddle(matrix);
-                        }
-                        if (!quiet) {
-                            System.out.println(formatter.format(riddle));
-                        }
-                        if (writefile) {
-                            writeRiddle(formatter, riddle);
-                        }
+                        riddle = maxNumbersToClear > 0 ?
+                                Creator.createRiddle(matrix, maxNumbersToClear) :
+                                Creator.createRiddle(matrix);
+                        if (!quiet) System.out.println(formatter.format(riddle));
+                        if (writefile) writeRiddle(formatter, riddle);
                         break;
 
                     case Both:
                         matrix = Creator.createFull(getSchema());
-                        if (maxNumbersToClear > 0) {
-                            riddle = Creator
-                                    .createRiddle(matrix, maxNumbersToClear);
-                        } else {
-                            riddle = Creator.createRiddle(matrix);
-                        }
+                        riddle = maxNumbersToClear > 0 ?
+                                Creator.createRiddle(matrix, maxNumbersToClear) :
+                                Creator.createRiddle(matrix);
                         if (!quiet) {
                             System.out.println(formatter.format(matrix));
                             System.out.println(formatter.format(riddle));
@@ -332,63 +229,37 @@ public class Client {
                         }
                         break;
                     default:
-                        throw new IllegalStateException("Unhandled case "
-                                + op);
+                        throw new IllegalStateException("Unhandled case " + op);
                 }
             }
         }
+
         long end = System.currentTimeMillis();
         if (!quiet) {
             System.out.print(formatter.documentEnd());
         }
 
         if (timing) {
-            System.err.printf("Found %d solutions. Took total of %.3f secs%n",count, (end - start)/1000.0);
-            System.err.printf("Each solution took %.3f secs%n",
-                    ((double) end - start) / (count*1000.0));
+            System.err.printf("Total time: %.3f s%n", (end - start) / 1000.0);
         }
     }
 
-
-    /**
-     * Write the sudoku solution to the output file.
-     * @throws IOException if some IO goes wrong.
-     */
-    private void writeSolution(final GameMatrixFormatter formatter, GameMatrix solution)
-    {
-        try {
-            FileWriter myWriter = new FileWriter(output.toString() + ".sol.txt");
-            GameMatrix r = solution;
-            myWriter.write(formatter.format(r).toString());
-            myWriter.close();
+    private void writeSolution(final GameMatrixFormatter formatter, GameMatrix solution) {
+        try (FileWriter myWriter = new FileWriter(output.toString() + ".sol.txt")) {
+            myWriter.write(formatter.format(solution).toString());
         } catch (IOException e) {
-            System.out.println("An error occurred.");
-            e.printStackTrace();
+            System.err.println("Error writing solution: " + e.getMessage());
         }
     }
 
-    /**
-     * Write the sudoku riddle to the output file.
-     * @throws IOException if some IO goes wrong.
-     */
-    private void writeRiddle(final GameMatrixFormatter formatter, GameMatrix riddle)
-    {
-        try {
-            FileWriter myWriter1 = new FileWriter(output.toString()+".sdku.txt");
-            myWriter1.write(formatter.format(riddle).toString());
-            myWriter1.close();
+    private void writeRiddle(final GameMatrixFormatter formatter, GameMatrix riddle) {
+        try (FileWriter myWriter = new FileWriter(output.toString() + ".sdku.txt")) {
+            myWriter.write(formatter.format(riddle).toString());
         } catch (IOException e) {
-            System.out.println("An error occurred.");
-            e.printStackTrace();
+            System.err.println("Error writing riddle: " + e.getMessage());
         }
     }
 
-
-    /** The program entry for the client.
-     * @param args the command line arguments.
-     * @throws CmdLineException if command line parsing went wrong.
-     * @throws IOException if file IO went wrong.
-     */
     public static void main(final String[] args)
             throws CmdLineException, IOException {
         Client client = new Client();
@@ -398,7 +269,6 @@ public class Client {
             parser.printUsage(System.out);
             return;
         }
-
         client.run();
     }
 }
