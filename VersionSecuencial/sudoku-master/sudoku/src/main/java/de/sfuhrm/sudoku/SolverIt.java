@@ -25,19 +25,29 @@ License along with this library; if not, write to the
 Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
 Boston, MA  02110-1301, USA.
  */
+/*
+Sudoku - a fast Java Sudoku game creation library.
+Copyright (C) 2017-2018  Stephan Fuhrmann
+LGPL v2.1 or later.
+*/
 package de.sfuhrm.sudoku;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.*;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class SolverIt {
 
     private final CachedGameMatrixImpl riddle;
     private final List<GameMatrix> possibleSolutions;
+
     public static final int DEFAULT_LIMIT = 1;
     private int limit;
 
@@ -49,17 +59,12 @@ public final class SolverIt {
         possibleSolutions = new ArrayList<>();
     }
 
-    public void setLimit(final int set) {
-        this.limit = set;
-    }
+    public void setLimit(final int set) { this.limit = set; }
 
     static final class State {
         final CachedGameMatrixImpl board;
-        final int freeCells;
-        State(CachedGameMatrixImpl board, int freeCells) {
-            this.board = board;
-            this.freeCells = freeCells;
-        }
+        final int free;
+        State(CachedGameMatrixImpl b, int f){ board = b; free = f; }
     }
 
     private static CachedGameMatrixImpl copyOf(CachedGameMatrixImpl src) {
@@ -69,37 +74,41 @@ public final class SolverIt {
     }
 
     public List<GameMatrix> solve() {
-        long start = System.currentTimeMillis();
         possibleSolutions.clear();
 
         int freeCells = riddle.getSchema().getTotalFields() - riddle.getSetCount();
 
-        BlockingQueue<State> queue = new LinkedBlockingQueue<>();
-        queue.offer(new State(copyOf(riddle), freeCells));
+        // Cola acotada para evitar OOM
+        BlockingQueue<State> q = new ArrayBlockingQueue<>(20_000);
+        q.offer(new State(copyOf(riddle), freeCells));
 
         List<GameMatrix> out = Collections.synchronizedList(possibleSolutions);
         AtomicBoolean stop = new AtomicBoolean(false);
 
-        int nThreads = Integer.getInteger("sudoku.threads",
-                Math.max(1, Runtime.getRuntime().availableProcessors()));
+        int nThreads = Integer.getInteger(
+                "sudoku.threads",
+                Math.max(1, Runtime.getRuntime().availableProcessors())
+        );
+        System.err.println("[ITER] SolverIt activo con " + nThreads + " hilos.");
+
         ExecutorService pool = Executors.newFixedThreadPool(nThreads);
 
         Runnable worker = () -> {
             while (!stop.get()) {
                 State s;
                 try {
-                    s = queue.poll(100, TimeUnit.MILLISECONDS);
+                    s = q.poll(100, TimeUnit.MILLISECONDS);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;
                 }
                 if (s == null) {
-                    if (stop.get() || queue.isEmpty()) return;
+                    if (stop.get() || q.isEmpty()) return;
                     continue;
                 }
                 if (out.size() >= limit) { stop.set(true); return; }
 
-                if (s.freeCells == 0) {
+                if (s.free == 0) {
                     GameMatrix g = new GameMatrixImpl(s.board.getSchema());
                     g.setAll(s.board.getArray());
                     synchronized (out) {
@@ -116,13 +125,27 @@ public final class SolverIt {
                 }
 
                 int mask = s.board.getFreeMask(cell.row, cell.column);
+                if (mask == 0) {
+                    // sin candidatos, poda
+                    continue;
+                }
+
                 int bits = Integer.bitCount(mask);
-                for (int b = 0; b < bits && !stop.get(); b++) {
+                // Limitar fan-out cuando el tablero está muy vacío
+                int fanout = (s.free > 120) ? Math.min(bits, 2) : bits;
+
+                for (int b = 0; b < fanout && !stop.get(); b++) {
                     int idx = Creator.getSetBitOffset(mask, b);
                     CachedGameMatrixImpl c = new CachedGameMatrixImpl(s.board.getSchema());
                     c.setAll(s.board.getArray());
                     c.set(cell.row, cell.column, (byte) idx);
-                    queue.offer(new State(c, s.freeCells - 1));
+                    try {
+                        // backpressure para no desbordar la cola
+                        q.offer(new State(c, s.free - 1), 50, TimeUnit.MILLISECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
                 }
             }
         };
@@ -130,10 +153,6 @@ public final class SolverIt {
         for (int i = 0; i < nThreads; i++) pool.submit(worker);
         pool.shutdown();
         try { pool.awaitTermination(10, TimeUnit.MINUTES); } catch (InterruptedException ignored) {}
-
-        long end = System.currentTimeMillis();
-        System.out.printf("[%3.3f] SUDOKU DONE (Iter). Free Cells: %d. Solutions Found: %d.%n%n",
-                (end - start) / 1000.0, freeCells, out.size());
 
         return Collections.unmodifiableList(out);
     }

@@ -1,3 +1,11 @@
+/* ---------------------------------------------------------------
+Práctica 1.
+Código fuente: SolverRec.java
+Grau GEIADE
+41533494W - Antonio Cayuela Lopez
+48054965F - Alejandro Fernandez Mimbrera
+--------------------------------------------------------------- */
+
 /*
 Sudoku - a fast Java Sudoku game creation library.
 Copyright (C) 2017-2018  Stephan Fuhrmann
@@ -58,6 +66,11 @@ public final class SolverRec {
      */
     private final int maxThreads;
 
+    // --- Minimal concurrency state (no high-level APIs) ---
+    private final Object monitor = new Object(); // monitor for wait/notify
+    private int activeTasks = 0;                 // number of worker threads currently running
+    private volatile boolean cancel = false;     // set to true when solution limit is reached
+
     /**
      * Counter for recursive calls on bactrack algorithm
      */
@@ -95,7 +108,7 @@ public final class SolverRec {
         }
 
         if (requested <= 0) {
-            requested = 1;
+            requested = cores;
         }
 
         this.maxThreads = Math.min(requested, cores);
@@ -125,6 +138,25 @@ public final class SolverRec {
         return maxThreads;
     }
 
+    private boolean canSpawnThread() {
+        synchronized (monitor) {
+            return activeTasks < Math.max(1, maxThreads);
+        }
+    }
+
+    private void beginTask() {
+        synchronized (monitor) { activeTasks++; }
+    }
+
+    private void endTask() {
+        synchronized (monitor) {
+            activeTasks--;
+            if (activeTasks <= 0) {
+                monitor.notifyAll();
+            }
+        }
+    }
+
     /**
      * Solves the Sudoku problem.
      *
@@ -132,74 +164,121 @@ public final class SolverRec {
      */
     public List<GameMatrix> solve() {
         start = System.currentTimeMillis();
+        cancel = false;
         possibleSolutions.clear();
-        int freeCells = riddle.getSchema().getTotalFields()
-                - riddle.getSetCount();
+        int freeCells = riddle.getSchema().getTotalFields() - riddle.getSetCount();
 
+        // Start search on the current thread
         backtrack(freeCells, new CellIndex());
 
+        // Wait for background workers (spawned tasks) to finish without using join
+        synchronized (monitor) {
+            while (activeTasks > 0 && !cancel) {
+                try {
+                    monitor.wait();
+                } catch (InterruptedException ignored) {
+                    // If interrupted, break early but keep state consistent
+                    break;
+                }
+            }
+        }
+
         long end = System.currentTimeMillis();
-        System.out.printf("[%3.3f] SUDOKU DONE. Recursive Calls: %d. Free Cells: %d. Solutions Found: %d.\n\n",(end-start)/1000.0, this.getRecursive_calls(), freeCells, possibleSolutions.size());
+        System.out.printf("[%3.3f] SUDOKU DONE. Recursive Calls: %d. Free Cells: %d. Solutions Found: %d.%n%n",
+                (end - start) / 1000.0, this.getRecursive_calls(), freeCells, possibleSolutions.size());
 
         return Collections.unmodifiableList(possibleSolutions);
     }
 
-    /**
-     * Solves a Sudoku using backtracking.
-     *
-     * @param freeCells number of free cells, abort criterion.
-     * @param minimumCell coordinates to the so-far found minimum cell.
-     * @return the total number of solutions.
-     */
     private int backtrack(final int freeCells, final CellIndex minimumCell) {
+        return backtrack(freeCells, minimumCell, this.riddle);
+    }
+
+    // Core backtracking that works on the provided board instance (can be a copy for worker threads)
+    private int backtrack(final int freeCells, final CellIndex minimumCell, final CachedGameMatrixImpl board) {
         assert freeCells >= 0 : "freeCells is negative";
 
-        if ((this.incRecursive_calls()%DEFAULT_STATS_STEP)==0) {
-            long end = System.currentTimeMillis();
-            System.out.printf("[%3.3f] Recursive Calls: %d. Free Cells: %d. Solutions Found: %d.\n",(end-start)/1000.0, this.getRecursive_calls(), freeCells, possibleSolutions.size());
+        if ((this.incRecursive_calls() % DEFAULT_STATS_STEP) == 0) {
+            long now = System.currentTimeMillis();
+            System.out.printf("[%3.3f] Recursive Calls: %d. Free Cells: %d. Solutions Found: %d.%n",
+                    (now - start) / 1000.0, this.getRecursive_calls(), freeCells, possibleSolutions.size());
         }
-        // don't recurse further if already at limit
+
+        // Early exit if we reached the solution limit or a global cancel was requested
+        if (cancel) {
+            return 0;
+        }
         if (possibleSolutions.size() >= limit) {
+            cancel = true;
+            synchronized (monitor) { monitor.notifyAll(); }
             return 0;
         }
 
-        // just one result, we have no more to choose
+        // Base case: solution found
         if (freeCells == 0) {
-            GameMatrix gmi = new GameMatrixImpl(riddle.getSchema());
-            gmi.setAll(riddle.getArray());
-            possibleSolutions.add(gmi);
-
+            GameMatrix gmi = new GameMatrixImpl(board.getSchema());
+            gmi.setAll(board.getArray());
+            synchronized (possibleSolutions) {
+                if (!cancel && possibleSolutions.size() < limit) {
+                    possibleSolutions.add(gmi);
+                    if (possibleSolutions.size() >= limit) {
+                        cancel = true;
+                        synchronized (monitor) { monitor.notifyAll(); }
+                    }
+                }
+            }
             return 1;
         }
 
-        GameMatrixImpl.FreeCellResult freeCellResult =
-                riddle.findLeastFreeCell(minimumCell);
+        GameMatrixImpl.FreeCellResult freeCellResult = board.findLeastFreeCell(minimumCell);
         if (freeCellResult != GameMatrixImpl.FreeCellResult.FOUND) {
-            // no solution
+            // dead end
             return 0;
         }
 
         int result = 0;
         int minimumRow = minimumCell.row;
         int minimumColumn = minimumCell.column;
-        int minimumFree = riddle.getFreeMask(minimumRow, minimumColumn);
+        int minimumFree = board.getFreeMask(minimumRow, minimumColumn);
         int minimumBits = Integer.bitCount(minimumFree);
 
-        // else we are done
-        // now try each number
+        // Explore candidates
         for (int bit = 0; bit < minimumBits; bit++) {
+            if (cancel) break; // cooperative cancellation
+
             int index = Creator.getSetBitOffset(minimumFree, bit);
             assert index > 0;
 
-            // Asignamos número index a la celda
-            riddle.set(minimumRow, minimumColumn, (byte) index);
-            int resultCount = backtrack(freeCells - 1, minimumCell);
-            result += resultCount;
+            // Decide: spawn a worker thread or continue inline (sequentially)
+            if (canSpawnThread()) {
+                // Prepare an isolated copy for the worker
+                final CachedGameMatrixImpl child = new CachedGameMatrixImpl(board.getSchema());
+                child.setAll(board.getArray());
+                child.set(minimumRow, minimumColumn, (byte) index);
+                final int childFree = freeCells - 1;
+
+                beginTask();
+                Thread t = new Thread(() -> {
+                    try {
+                        backtrack(childFree, new CellIndex(), child);
+                    } catch (Throwable ex) {
+                        // Robust error handling to avoid silent thread death
+                        System.err.println("Worker error: " + ex.getMessage());
+                    } finally {
+                        endTask();
+                    }
+                });
+                t.start();
+            } else {
+                // Continue in current thread to respect maxThreads
+                board.set(minimumRow, minimumColumn, (byte) index);
+                int rc = backtrack(freeCells - 1, minimumCell, board);
+                result += rc;
+            }
         }
-        // Antes de volver marcamos la celda como no asignada
-        riddle.set(minimumRow,
-                minimumColumn,
-                riddle.getSchema().getUnsetValue());
+
+        // Undo assignment if we modified current board in this frame
+        board.set(minimumRow, minimumColumn, board.getSchema().getUnsetValue());
 
         return result;
     }
