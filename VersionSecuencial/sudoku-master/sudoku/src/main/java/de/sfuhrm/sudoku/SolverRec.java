@@ -71,9 +71,9 @@ public final class SolverRec {
     private volatile GameMatrix found = null;
 
     /**
-     * Counter for recursive calls on bactrack algorithm
+     * Counter for recursive calls on backtrack algorithm (Atomic to avoid synchronized).
      */
-    private static long recursive_calls=0;
+    private static final java.util.concurrent.atomic.AtomicLong recursive_calls = new java.util.concurrent.atomic.AtomicLong(0);
     public static long start;
 
     private static final long DEFAULT_STATS_STEP = 1000000;
@@ -113,16 +113,16 @@ public final class SolverRec {
         this.maxThreads = Math.min(requested, cores);
     }
 
-    public static synchronized long getRecursive_calls() {
-        return recursive_calls;
+    public static long getRecursive_calls() {
+        return recursive_calls.get();
     }
 
-    public static synchronized void setRecursive_calls(long recursive_calls) {
-        SolverRec.recursive_calls = recursive_calls;
+    public static void setRecursive_calls(long value) {
+        recursive_calls.set(value);
     }
 
-    public static synchronized long incRecursive_calls() {
-        return ++SolverRec.recursive_calls;
+    public static long incRecursive_calls() {
+        return recursive_calls.incrementAndGet();
     }
 
     /** Set the limit for maximum results.
