@@ -159,9 +159,14 @@ public class Client {
         if (mode == Mode.Seq || (mode == Mode.Auto && ThreadsNumber <= 1)) {
             Solver solver = new Solver(gameMatrix);
             solutions = solver.solve();
+
         } else if (mode == Mode.Iter || (mode == Mode.Auto && ThreadsNumber > 1)) {
+
             System.setProperty("sudoku.threads", Integer.toString(ThreadsNumber));
+
             SolverIt solver = new SolverIt(gameMatrix);
+
+
             solutions = solver.solve();
         } else {
             System.setProperty("sudoku.threads", Integer.toString(ThreadsNumber));

@@ -66,10 +66,9 @@ public final class SolverRec {
      */
     private final int maxThreads;
 
-    // --- Minimal concurrency state (no high-level APIs) ---
-    private final Object monitor = new Object(); // monitor for wait/notify
-    private int activeTasks = 0;                 // number of worker threads currently running
-    private volatile boolean cancel = false;     // set to true when solution limit is reached
+    /** Cooperative cancellation and publication of result (no synchronization). */
+    private volatile boolean cancel = false;
+    private volatile GameMatrix found = null;
 
     /**
      * Counter for recursive calls on bactrack algorithm
@@ -138,148 +137,259 @@ public final class SolverRec {
         return maxThreads;
     }
 
-    private boolean canSpawnThread() {
-        synchronized (monitor) {
-            return activeTasks < Math.max(1, maxThreads);
-        }
-    }
-
-    private void beginTask() {
-        synchronized (monitor) { activeTasks++; }
-    }
-
-    private void endTask() {
-        synchronized (monitor) {
-            activeTasks--;
-            if (activeTasks <= 0) {
-                monitor.notifyAll();
-            }
-        }
-    }
-
-    /**
-     * Solves the Sudoku problem.
-     *
-     * @return the found solutions. Should be only one.
-     */
     public List<GameMatrix> solve() {
         start = System.currentTimeMillis();
         cancel = false;
+        found = null;
         possibleSolutions.clear();
-        int freeCells = riddle.getSchema().getTotalFields() - riddle.getSetCount();
+        setRecursive_calls(0);
 
-        // Start search on the current thread
-        backtrack(freeCells, new CellIndex());
+        final int total = riddle.getSchema().getTotalFields();
+        final int freeCells = total - riddle.getSetCount();
 
-        // Wait for background workers (spawned tasks) to finish without using join
-        synchronized (monitor) {
-            while (activeTasks > 0 && !cancel) {
-                try {
-                    monitor.wait();
-                } catch (InterruptedException ignored) {
-                    // If interrupted, break early but keep state consistent
+        // Trivial: already solved
+        if (freeCells == 0) {
+            GameMatrix gmi = new GameMatrixImpl(riddle.getSchema());
+            gmi.setAll(riddle.getArray());
+            possibleSolutions.add(gmi);
+            return Collections.unmodifiableList(possibleSolutions);
+        }
+
+        // Build up to maxThreads distinct starting boards (seeds) using a small BFS.
+        // Rule: apply forced moves (cells with exactly 1 candidate) INLINE on the same board,
+        // and only branch/enqueue when a cell has >=2 candidates.
+        List<CachedGameMatrixImpl> seedBoards = new ArrayList<>(maxThreads);
+        List<Integer> seedFree = new ArrayList<>(maxThreads);
+
+        java.util.ArrayDeque<CachedGameMatrixImpl> qBoards = new java.util.ArrayDeque<>();
+        java.util.ArrayDeque<Integer> qFree = new java.util.ArrayDeque<>();
+
+        // Start from a clean copy of the initial board
+        CachedGameMatrixImpl startBoard = new CachedGameMatrixImpl(riddle.getSchema());
+        startBoard.setAll(riddle.getArray());
+        qBoards.add(startBoard);
+        qFree.add(freeCells);
+
+        CellIndex tmp = new CellIndex();
+
+        while (seedBoards.size() < maxThreads && !qBoards.isEmpty()) {
+            CachedGameMatrixImpl cur = qBoards.removeFirst();
+            int curFree = qFree.removeFirst();
+
+            // compress by applying single-candidate cells inline
+            boolean expanded = false;
+            while (true) {
+                if (curFree == 0) {
+                    // already solved -> accept as a seed
+                    seedBoards.add(cur);
+                    seedFree.add(curFree);
+                    expanded = true;
+                    break;
+                }
+                GameMatrixImpl.FreeCellResult r = cur.findLeastFreeCell(tmp);
+                if (r != GameMatrixImpl.FreeCellResult.FOUND) {
+                    // dead end
+                    expanded = true;
+                    break;
+                }
+                int rr = tmp.row, cc = tmp.column;
+                int m = cur.getFreeMask(rr, cc);
+                int cnt = Integer.bitCount(m);
+                if (cnt == 0) {
+                    // dead end
+                    expanded = true;
+                    break;
+                }
+                if (cnt == 1) {
+                    // forced move: stay on this same board; do not enqueue
+                    int v = Creator.getSetBitOffset(m, 0);
+                    cur.set(rr, cc, (byte) v);
+                    curFree -= 1;
+                    continue; // continue compressing
+                } else {
+                    // branching point: generate children
+                    boolean enqueuedOneForDeeper = false;
+                    for (int b = 0; b < cnt; b++) {
+                        int v = Creator.getSetBitOffset(m, b);
+                        CachedGameMatrixImpl child = new CachedGameMatrixImpl(cur.getSchema());
+                        child.setAll(cur.getArray());
+                        child.set(rr, cc, (byte) v);
+
+                        if (seedBoards.size() < maxThreads) {
+                            // promote to seed
+                            seedBoards.add(child);
+                            seedFree.add(curFree - 1);
+                            // also enqueue ONE child to allow deeper expansion (use a distinct copy to avoid aliasing)
+                            if (!enqueuedOneForDeeper) {
+                                CachedGameMatrixImpl childForQueue = new CachedGameMatrixImpl(cur.getSchema());
+                                childForQueue.setAll(child.getArray());
+                                qBoards.add(childForQueue);
+                                qFree.add(curFree - 1);
+                                enqueuedOneForDeeper = true;
+                            }
+                        } else {
+                            // we already have enough seeds; further children not needed
+                            break;
+                        }
+                    }
+                    expanded = true;
                     break;
                 }
             }
+            if (!expanded) {
+                // should not happen, but keep loop safe
+                break;
+            }
+        }
+
+        // If no viable seeds, return (unsatisfiable)
+        if (seedBoards.isEmpty()) {
+            long endEmpty = System.currentTimeMillis();
+            System.out.printf("[%3.3f] SUDOKU DONE. Free Cells: %d. Solutions Found: %d.%n%n",
+                    (endEmpty - start) / 1000.0, freeCells, possibleSolutions.size());
+            return Collections.unmodifiableList(possibleSolutions);
+        }
+
+        int workersToStart = Math.min(maxThreads, seedBoards.size());
+        List<Thread> workers = new ArrayList<>(workersToStart);
+        List<Worker> tasks = new ArrayList<>(workersToStart);
+
+        for (int i = 0; i < workersToStart; i++) {
+            CachedGameMatrixImpl sb = seedBoards.get(i);
+            int sf = seedFree.get(i);
+            Worker w = new Worker(i, sb, sf);
+            Thread t = new Thread(w, "SolverRec-Worker-" + i);
+            tasks.add(w);
+            workers.add(t);
+            t.start();
+        }
+
+        // Polling loop (no join, no wait/notify)
+        try {
+            while (found == null) {
+                boolean anyAlive = false;
+                for (Thread t : workers) {
+                    if (t.isAlive()) { anyAlive = true;
+                        break;
+                    }
+                }
+                if (!anyAlive) break; // all finished
+                try {
+                    Thread.sleep(3); // be nice to CPU
+                } catch (InterruptedException ignored) {
+                    break;
+                }
+                // Optional: early pick if any worker reported solved
+                for (Worker w : tasks) {
+                    if (w.solved && found == null && w.mySolution != null) {
+                        found = w.mySolution;
+                        break;
+                    }
+                }
+            }
+        } finally {
+            // Best-effort cooperative stop (workers check cancel)
+            cancel = (found != null);
+        }
+
+        if (found != null && possibleSolutions.size() < limit) {
+            possibleSolutions.add(found);
         }
 
         long end = System.currentTimeMillis();
-        System.out.printf("[%3.3f] SUDOKU DONE. Recursive Calls: %d. Free Cells: %d. Solutions Found: %d.%n%n",
-                (end - start) / 1000.0, this.getRecursive_calls(), freeCells, possibleSolutions.size());
+        System.out.printf("[%3.3f] SUDOKU DONE. Free Cells: %d. Solutions Found: %d.%n%n",
+                (end - start) / 1000.0, freeCells, possibleSolutions.size());
 
         return Collections.unmodifiableList(possibleSolutions);
     }
 
-    private int backtrack(final int freeCells, final CellIndex minimumCell) {
-        return backtrack(freeCells, minimumCell, this.riddle);
-    }
 
-    // Core backtracking that works on the provided board instance (can be a copy for worker threads)
-    private int backtrack(final int freeCells, final CellIndex minimumCell, final CachedGameMatrixImpl board) {
+    // Pure sequential backtracking. If 'self' is not null, it may publish a solution and set cancel.
+    private int backtrack(final int freeCells, final CellIndex minimumCell,
+                          final CachedGameMatrixImpl board, final Worker self) {
         assert freeCells >= 0 : "freeCells is negative";
 
         if ((this.incRecursive_calls() % DEFAULT_STATS_STEP) == 0) {
             long now = System.currentTimeMillis();
-            System.out.printf("[%3.3f] Recursive Calls: %d. Free Cells: %d. Solutions Found: %d.%n",
-                    (now - start) / 1000.0, this.getRecursive_calls(), freeCells, possibleSolutions.size());
+            Thread cur = Thread.currentThread();
+            System.out.printf("[%3.3f] [TID=%d|%s] Recursive Calls: %d. Free Cells: %d. Solutions Found: %d.%n",
+                    (now - start) / 1000.0,
+                    cur.getId(), cur.getName(),
+                    this.getRecursive_calls(), freeCells, possibleSolutions.size());
         }
 
-        // Early exit if we reached the solution limit or a global cancel was requested
         if (cancel) {
             return 0;
         }
-        if (possibleSolutions.size() >= limit) {
+        if (possibleSolutions.size() >= limit || found != null) {
             cancel = true;
-            synchronized (monitor) { monitor.notifyAll(); }
             return 0;
         }
 
-        // Base case: solution found
         if (freeCells == 0) {
             GameMatrix gmi = new GameMatrixImpl(board.getSchema());
             gmi.setAll(board.getArray());
-            synchronized (possibleSolutions) {
-                if (!cancel && possibleSolutions.size() < limit) {
-                    possibleSolutions.add(gmi);
-                    if (possibleSolutions.size() >= limit) {
-                        cancel = true;
-                        synchronized (monitor) { monitor.notifyAll(); }
-                    }
-                }
+            if (self != null && !self.solved && found == null) {
+                Thread cur = Thread.currentThread();
+                System.out.printf("[%.3f] [TID=%d|%s] -> SOLUCIÓN ENCONTRADA por worker #%d%n",
+                        (System.currentTimeMillis() - start) / 1000.0,
+                        cur.getId(), cur.getName(), self.id);
+                self.mySolution = gmi;
+                self.solved = true;
+                cancel = true; // stop others cooperatively
             }
             return 1;
         }
 
         GameMatrixImpl.FreeCellResult freeCellResult = board.findLeastFreeCell(minimumCell);
         if (freeCellResult != GameMatrixImpl.FreeCellResult.FOUND) {
-            // dead end
             return 0;
         }
 
         int result = 0;
-        int minimumRow = minimumCell.row;
-        int minimumColumn = minimumCell.column;
-        int minimumFree = board.getFreeMask(minimumRow, minimumColumn);
-        int minimumBits = Integer.bitCount(minimumFree);
+        int r = minimumCell.row;
+        int c = minimumCell.column;
+        int freeMask = board.getFreeMask(r, c);
+        int count = Integer.bitCount(freeMask);
 
-        // Explore candidates
-        for (int bit = 0; bit < minimumBits; bit++) {
-            if (cancel) break; // cooperative cancellation
+        for (int b = 0; b < count; b++) {
+            if (cancel) break;
+            int val = Creator.getSetBitOffset(freeMask, b);
+            assert val > 0;
 
-            int index = Creator.getSetBitOffset(minimumFree, bit);
-            assert index > 0;
-
-            // Decide: spawn a worker thread or continue inline (sequentially)
-            if (canSpawnThread()) {
-                // Prepare an isolated copy for the worker
-                final CachedGameMatrixImpl child = new CachedGameMatrixImpl(board.getSchema());
-                child.setAll(board.getArray());
-                child.set(minimumRow, minimumColumn, (byte) index);
-                final int childFree = freeCells - 1;
-
-                beginTask();
-                Thread t = new Thread(() -> {
-                    try {
-                        backtrack(childFree, new CellIndex(), child);
-                    } catch (Throwable ex) {
-                        // Robust error handling to avoid silent thread death
-                        System.err.println("Worker error: " + ex.getMessage());
-                    } finally {
-                        endTask();
-                    }
-                });
-                t.start();
-            } else {
-                // Continue in current thread to respect maxThreads
-                board.set(minimumRow, minimumColumn, (byte) index);
-                int rc = backtrack(freeCells - 1, minimumCell, board);
-                result += rc;
-            }
+            board.set(r, c, (byte) val);
+            result += backtrack(freeCells - 1, minimumCell, board, self);
         }
 
-        // Undo assignment if we modified current board in this frame
-        board.set(minimumRow, minimumColumn, board.getSchema().getUnsetValue());
-
+        board.set(r, c, board.getSchema().getUnsetValue());
         return result;
+    }
+
+    /** First-level worker: explores one branch sequentially, cooperatively checking cancel. */
+    private final class Worker implements Runnable {
+        private final int id;
+        private final CachedGameMatrixImpl board;
+        private final int initialFreeCells;
+        volatile boolean solved = false;
+        volatile GameMatrix mySolution = null;
+
+        Worker(int id, CachedGameMatrixImpl board, int freeCells) {
+            this.id = id;
+            this.board = board;
+            this.initialFreeCells = freeCells;
+        }
+
+        @Override
+        public void run() {
+            try {
+                Thread cur = Thread.currentThread();
+                System.out.printf("[%.3f] [TID=%d|%s] Worker #%d START%n",
+                        (System.currentTimeMillis() - start) / 1000.0,
+                        cur.getId(), cur.getName(), id);
+                backtrack(initialFreeCells, new CellIndex(), board, this);
+            } catch (Throwable ex) {
+                System.err.println("Worker " + id + " error: " + ex.getMessage());
+            }
+        }
     }
 }
