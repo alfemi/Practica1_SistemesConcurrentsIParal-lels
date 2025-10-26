@@ -1,0 +1,7 @@
+sudoku-master/sudoku-output/src/main/java/de/sfuhrm/sudoku/output/LatexTableFormatter.java
+sudoku-master/sudoku-output/src/main/java/de/sfuhrm/sudoku/output/JsonArrayFormatter.java
+sudoku-master/sudoku-output/src/main/java/de/sfuhrm/sudoku/output/PlainTextFormatter.java
+sudoku-master/sudoku-output/src/main/java/de/sfuhrm/sudoku/output/GameMatrixFormatter.java
+sudoku-master/sudoku-output/src/main/java/de/sfuhrm/sudoku/output/MarkdownTableFormatter.java
+sudoku-master/sudoku-output/src/main/java/de/sfuhrm/sudoku/output/AbstractTextFormatter.java
+sudoku-master/sudoku-output/src/main/java/de/sfuhrm/sudoku/output/package-info.java

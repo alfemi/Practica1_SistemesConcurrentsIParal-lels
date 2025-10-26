@@ -1,0 +1,16 @@
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/GameSchemas.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/SolverIt.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/GameMatrixFactory.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/CachedGameMatrixImpl.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/CellIndex.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/GameMatrix.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/GameSchema.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/SolverRec.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/Solver.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/Riddle.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/QuadraticArrays.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/GameMatrixImpl.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/GameSchemaImpl.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/RiddleImpl.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/Creator.java
+sudoku-master/sudoku/src/main/java/de/sfuhrm/sudoku/package-info.java
