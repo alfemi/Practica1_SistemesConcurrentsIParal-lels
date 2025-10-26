@@ -122,8 +122,10 @@ public class Client {
     @Option(name = "-h", aliases = {"-help"}, usage = "Show help")
     private boolean help;
 
+    // modos de ejecución añadidos para probar secuencial, iterativo y recursivo
     enum Mode { Auto, Seq, Iter, Rec }
 
+    // opción para elegir el modo desde consola
     @Option(name = "-m", aliases = {"-mode"}, usage = "Solver mode: auto|seq|iter|rec")
     private Mode mode = Mode.Auto;
 
@@ -165,18 +167,18 @@ public class Client {
         List<GameMatrix> solutions;
 
         if (mode == Mode.Seq || (mode == Mode.Auto && ThreadsNumber <= 1)) {
+            // modo secuencial, usado como referencia
             Solver solver = new Solver(gameMatrix);
             solutions = solver.solve();
 
         } else if (mode == Mode.Iter || (mode == Mode.Auto && ThreadsNumber > 1)) {
-
+            // modo iterativo concurrente con varios hilos
             System.setProperty("sudoku.threads", Integer.toString(ThreadsNumber));
-
             SolverIt solver = new SolverIt(gameMatrix);
             solver.setNumThreads(ThreadsNumber);
-
             solutions = solver.solve();
         } else {
+            // modo recursivo concurrente con varios hilos
             System.setProperty("sudoku.threads", Integer.toString(ThreadsNumber));
             SolverRec solver = new SolverRec(gameMatrix);
             solutions = solver.solve();
@@ -206,7 +208,7 @@ public class Client {
         }
 
         if (op == Op.Solve) {
-            solve(formatter);
+            solve(formatter); // llamada al método con los modos añadidos
         } else {
             for (int i = 0; i < count; i++) {
                 GameMatrix matrix;
